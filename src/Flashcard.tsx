@@ -4,6 +4,8 @@ import "./Flashcard.css";
 interface Question {
   question: string;
   answer: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  points: number;
 }
 
 interface Flashcard {
@@ -13,6 +15,12 @@ interface Flashcard {
   slides: number;
   favorite: boolean;
   questions: Question[];
+}
+
+interface PracticeStats {
+  totalPoints: number;
+  questionsAnswered: number;
+  correctAnswers: number;
 }
 
 const Flashcard: React.FC = () => {
@@ -25,16 +33,32 @@ const Flashcard: React.FC = () => {
   const [currentCard, setCurrentCard] = useState<Flashcard | null>(null);
   const [newQuestion, setNewQuestion] = useState("");
   const [newAnswer, setNewAnswer] = useState("");
+  const [newDifficulty, setNewDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
   const [isPracticeMode, setIsPracticeMode] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [error, setError] = useState("");
+  const [practiceStats, setPracticeStats] = useState<PracticeStats>({
+    totalPoints: 0,
+    questionsAnswered: 0,
+    correctAnswers: 0
+  });
+  const [editingQuestionIndex, setEditingQuestionIndex] = useState<number | null>(null);
 
   // Save to localStorage whenever flashcards change
   useEffect(() => {
     localStorage.setItem("flashcards", JSON.stringify(flashcards));
   }, [flashcards]);
+
+  const getDifficultyPoints = (difficulty: 'easy' | 'medium' | 'hard'): number => {
+    switch (difficulty) {
+      case 'easy': return 1;
+      case 'medium': return 3;
+      case 'hard': return 5;
+      default: return 3;
+    }
+  };
 
   const addFlashcard = () => {
     if (!title.trim()) {
@@ -94,11 +118,17 @@ const Flashcard: React.FC = () => {
     }
 
     setError("");
+    const points = getDifficultyPoints(newDifficulty);
     const updatedCard = {
       ...currentCard,
       questions: [
         ...currentCard.questions,
-        { question: newQuestion, answer: newAnswer },
+        { 
+          question: newQuestion, 
+          answer: newAnswer, 
+          difficulty: newDifficulty,
+          points: points
+        },
       ],
       slides: currentCard.questions.length + 1,
     };
@@ -109,6 +139,28 @@ const Flashcard: React.FC = () => {
     setCurrentCard(updatedCard);
     setNewQuestion("");
     setNewAnswer("");
+    setNewDifficulty('medium');
+  };
+
+  const updateQuestion = (index: number, updatedQuestion: Partial<Question>) => {
+    if (!currentCard) return;
+
+    const updatedQuestions = [...currentCard.questions];
+    updatedQuestions[index] = { 
+      ...updatedQuestions[index], 
+      ...updatedQuestion,
+      points: updatedQuestion.difficulty ? getDifficultyPoints(updatedQuestion.difficulty) : updatedQuestions[index].points
+    };
+
+    const updatedCard = {
+      ...currentCard,
+      questions: updatedQuestions,
+    };
+
+    setFlashcards(
+      flashcards.map(card => (card.id === currentCard.id ? updatedCard : card))
+    );
+    setCurrentCard(updatedCard);
   };
 
   const deleteQuestion = (index: number) => {
@@ -135,9 +187,34 @@ const Flashcard: React.FC = () => {
       setIsEditing(false);
       setCurrentQuestionIndex(0);
       setShowAnswer(false);
+      setPracticeStats({
+        totalPoints: 0,
+        questionsAnswered: 0,
+        correctAnswers: 0
+      });
     } else {
       setError("No questions available for practice");
     }
+  };
+
+  const markAnswer = (correct: boolean) => {
+    if (!currentCard || !currentCard.questions[currentQuestionIndex]) return;
+
+    const currentQuestion = currentCard.questions[currentQuestionIndex];
+    const pointsEarned = correct ? currentQuestion.points : 0;
+
+    setPracticeStats(prev => ({
+      totalPoints: prev.totalPoints + pointsEarned,
+      questionsAnswered: prev.questionsAnswered + 1,
+      correctAnswers: prev.correctAnswers + (correct ? 1 : 0)
+    }));
+
+    // Auto-advance to next question after marking (with delay for user feedback)
+    setTimeout(() => {
+      if (currentQuestionIndex < currentCard.questions.length - 1) {
+        nextQuestion();
+      }
+    }, 1500);
   };
 
   const nextQuestion = () => {
@@ -170,6 +247,11 @@ const Flashcard: React.FC = () => {
   const resetPractice = () => {
     setCurrentQuestionIndex(0);
     setShowAnswer(false);
+    setPracticeStats({
+      totalPoints: 0,
+      questionsAnswered: 0,
+      correctAnswers: 0
+    });
   };
 
   return (
@@ -275,6 +357,15 @@ const Flashcard: React.FC = () => {
                 onChange={(e) => setNewAnswer(e.target.value)}
                 placeholder="Answer"
               />
+              <select
+                value={newDifficulty}
+                onChange={(e) => setNewDifficulty(e.target.value as 'easy' | 'medium' | 'hard')}
+                className="difficulty-select"
+              >
+                <option value="easy">Easy (1 point)</option>
+                <option value="medium">Medium (3 points)</option>
+                <option value="hard">Hard (5 points)</option>
+              </select>
               <button className="btn" onClick={addQuestion}>
                 Add Question
               </button>
@@ -285,41 +376,125 @@ const Flashcard: React.FC = () => {
               {currentCard?.questions.map((q, index) => (
                 <div key={index} className="question-item">
                   <div className="question-text">
-                    <strong>Q:</strong> {q.question}
-                    <br />
-                    <strong>A:</strong> {q.answer}
+                    {editingQuestionIndex === index ? (
+                      <div className="question-edit-form">
+                        <input
+                          value={q.question}
+                          onChange={(e) => updateQuestion(index, { question: e.target.value })}
+                          className="edit-input"
+                        />
+                        <input
+                          value={q.answer}
+                          onChange={(e) => updateQuestion(index, { answer: e.target.value })}
+                          className="edit-input"
+                        />
+                        <select
+                          value={q.difficulty}
+                          onChange={(e) => updateQuestion(index, { difficulty: e.target.value as 'easy' | 'medium' | 'hard' })}
+                          className="edit-select"
+                        >
+                          <option value="easy">Easy (1 point)</option>
+                          <option value="medium">Medium (3 points)</option>
+                          <option value="hard">Hard (5 points)</option>
+                        </select>
+                        <button
+                          onClick={() => setEditingQuestionIndex(null)}
+                          className="save-btn"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="difficulty-badge-container">
+                          <span className={`difficulty-badge difficulty-${q.difficulty}`}>
+                            {q.difficulty.toUpperCase()} ({q.points}pts)
+                          </span>
+                        </div>
+                        <strong>Q:</strong> {q.question}
+                        <br />
+                        <strong>A:</strong> {q.answer}
+                      </>
+                    )}
                   </div>
-                  <button
-                    className="delete-btn"
-                    onClick={() => deleteQuestion(index)}
-                  >
-                    ×
-                  </button>
+                  <div className="question-actions">
+                    <button
+                      onClick={() => setEditingQuestionIndex(editingQuestionIndex === index ? null : index)}
+                      className="edit-btn"
+                    >
+                      {editingQuestionIndex === index ? 'Cancel' : 'Edit'}
+                    </button>
+                    <button
+                      className="delete-btn"
+                      onClick={() => deleteQuestion(index)}
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
           </div>
         ) : (
           <div className="flashcard-practice">
-            <div className="progress-indicator">
-              Question {currentQuestionIndex + 1} of {currentCard?.questions.length}
+            <div className="practice-stats">
+              <div className="stats-left">
+                <div className="progress-indicator">
+                  Question {currentQuestionIndex + 1} of {currentCard?.questions.length}
+                </div>
+                <div className="current-question-info">
+                  {currentCard?.questions[currentQuestionIndex] && (
+                    <span className={`difficulty-badge difficulty-${currentCard.questions[currentQuestionIndex].difficulty}`}>
+                      {currentCard.questions[currentQuestionIndex].difficulty.toUpperCase()} ({currentCard.questions[currentQuestionIndex].points}pts)
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="stats-right">
+                <div className="score-display">
+                  Score: {practiceStats.totalPoints} points
+                </div>
+                <div className="accuracy-display">
+                  Accuracy: {practiceStats.questionsAnswered > 0 ? Math.round((practiceStats.correctAnswers / practiceStats.questionsAnswered) * 100) : 0}%
+                </div>
+              </div>
             </div>
+
             <div className="flashcard-box">
               <p className="flashcard-question">
                 {currentCard?.questions[currentQuestionIndex]?.question}
               </p>
               {showAnswer && (
-                <p className="flashcard-answer">
-                  {currentCard?.questions[currentQuestionIndex]?.answer}
-                </p>
+                <>
+                  <p className="flashcard-answer">
+                    {currentCard?.questions[currentQuestionIndex]?.answer}
+                  </p>
+                  <div className="answer-buttons">
+                    <button
+                      className="btn correct-btn"
+                      onClick={() => markAnswer(true)}
+                    >
+                      Correct (+{currentCard?.questions[currentQuestionIndex]?.points}pts)
+                    </button>
+                    <button
+                      className="btn incorrect-btn"
+                      onClick={() => markAnswer(false)}
+                    >
+                      Incorrect (0pts)
+                    </button>
+                  </div>
+                </>
               )}
-              <button
-                className="btn"
-                onClick={() => setShowAnswer(!showAnswer)}
-              >
-                {showAnswer ? "Hide Answer" : "Show Answer"}
-              </button>
+              {!showAnswer && (
+                <button
+                  className="btn"
+                  onClick={() => setShowAnswer(true)}
+                >
+                  Show Answer
+                </button>
+              )}
             </div>
+
             <div className="navigation-buttons">
               <button
                 className="btn"
